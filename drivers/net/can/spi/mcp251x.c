@@ -479,8 +479,6 @@ static void mcp251x_hw_rx(struct spi_device *spi, u8 *buf)
 	struct mcp251x_priv *priv = spi_get_drvdata(spi);
 	struct sk_buff *skb;
 	struct can_frame *frame;
-	u8 i;
-	char debug_buffer[128];
 
 	skb = alloc_can_skb(priv->net, &frame);
 	if (!skb) {
@@ -515,13 +513,6 @@ static void mcp251x_hw_rx(struct spi_device *spi, u8 *buf)
 	frame->can_dlc = get_can_dlc(buf[RXBDLC_OFF] & RXBDLC_LEN_MASK);
 	memcpy(frame->data, buf + RXBDAT_OFF, frame->can_dlc);
 	
-	sprintf(debug_buffer, "%d: ", frame->can_dlc);
-	for (i = 0; i < frame->can_dlc; i++) {
-		sprintf(debug_buffer + strlen(debug_buffer), 
-			"%02x", frame->data[i]);
-	}
-	printk(KERN_DEBUG "%s", debug_buffer);
-
 	priv->net->stats.rx_packets++;
 	priv->net->stats.rx_bytes += frame->can_dlc;
 
@@ -842,18 +833,14 @@ static irqreturn_t mcp251x_can_ist(int irq, void *dev_id)
 	struct net_device *net = priv->net;
 	u8 rx_buf[16 * SPI_TRANSFER_BUF_LEN];
 	u8 rx_buf_idx = 0;
-	u8 i = 0;
+	u8 i;
 
 	mutex_lock(&priv->mcp_lock);
 
 	while (!priv->force_quit) {
 		u8 rx_status;
-		u8 *buf;
-		u8 buf_idx = 0;
 		
 		rx_status = mcp251x_rx_status(spi);
-		printk(KERN_DEBUG "s %02x", rx_status);
-		
 		rx_status &= 0xC0;
 		
 		if (rx_status == 0)
@@ -866,22 +853,23 @@ static irqreturn_t mcp251x_can_ist(int irq, void *dev_id)
 		} else {
 		}
 		
-		buf = &rx_buf[rx_buf_idx];
-		buf_idx = priv->next_rx_idx;
-		if (mcp251x_is_2510(spi)) {
-			int i, len;
+		mcp251x_hw_rx_frame(spi, &rx_buf[rx_buf_idx], priv->next_rx_idx);
+		//~ buf = &rx_buf[rx_buf_idx];
+		//~ buf_idx = priv->next_rx_idx;
+		//~ if (mcp251x_is_2510(spi)) {
+			//~ int i, len;
 
-			for (i = 1; i < RXBDAT_OFF; i++)
-				buf[i] = mcp251x_read_reg(spi, RXBCTRL(buf_idx) + i);
+			//~ for (i = 1; i < RXBDAT_OFF; i++)
+				//~ buf[i] = mcp251x_read_reg(spi, RXBCTRL(buf_idx) + i);
 
-			len = get_can_dlc(buf[RXBDLC_OFF] & RXBDLC_LEN_MASK);
-			for (; i < (RXBDAT_OFF + len); i++)
-				buf[i] = mcp251x_read_reg(spi, RXBCTRL(buf_idx) + i);
-		} else {
-			priv->spi_tx_buf[RXBCTRL_OFF] = INSTRUCTION_READ_RXB(buf_idx);
-			mcp251x_spi_trans(spi, SPI_TRANSFER_BUF_LEN);
-			memcpy(buf, priv->spi_rx_buf, SPI_TRANSFER_BUF_LEN);
-		}
+			//~ len = get_can_dlc(buf[RXBDLC_OFF] & RXBDLC_LEN_MASK);
+			//~ for (; i < (RXBDAT_OFF + len); i++)
+				//~ buf[i] = mcp251x_read_reg(spi, RXBCTRL(buf_idx) + i);
+		//~ } else {
+			//~ priv->spi_tx_buf[RXBCTRL_OFF] = INSTRUCTION_READ_RXB(buf_idx);
+			//~ mcp251x_spi_trans(spi, SPI_TRANSFER_BUF_LEN);
+			//~ memcpy(buf, priv->spi_rx_buf, SPI_TRANSFER_BUF_LEN);
+		//~ }
 		rx_buf_idx += SPI_TRANSFER_BUF_LEN;
 		/*
 		 * Free one buffer ASAP
@@ -890,9 +878,7 @@ static irqreturn_t mcp251x_can_ist(int irq, void *dev_id)
 		if (mcp251x_is_2510(spi))
 			mcp251x_write_bits(spi, CANINTF, CANINTF_RX0IF, 0x00);
 		
-
 		rx_status = mcp251x_rx_status(spi);
-		printk(KERN_DEBUG "s' %02x", rx_status);
 		
 		if (priv->next_rx_idx == 1) {
 			priv->next_rx_idx = 0;
@@ -986,7 +972,6 @@ static irqreturn_t mcp251x_can_ist(int irq, void *dev_id)
 			}
 		}
 
-		printk(KERN_DEBUG "intf = %02X", intf);
 		if (intf == 0)
 			break;
 
@@ -1000,15 +985,12 @@ static irqreturn_t mcp251x_can_ist(int irq, void *dev_id)
 			}
 			netif_wake_queue(net);
 		}
-
 	}
+	mutex_unlock(&priv->mcp_lock);
 
 	for (i = 0; i < rx_buf_idx; i += SPI_TRANSFER_BUF_LEN) {
-		printk(KERN_INFO "i=%d %d\n", i, rx_buf_idx);
 		mcp251x_hw_rx(spi, &rx_buf[i]);
 	}
-
-	mutex_unlock(&priv->mcp_lock);
 	
 	return IRQ_HANDLED;
 }
@@ -1167,8 +1149,6 @@ static int mcp251x_can_probe(struct spi_device *spi)
 	ret = spi_setup(spi);
 	if (ret)
 		goto out_clk;
-
-	printk(KERN_DEBUG "SPI clock: %d", spi->max_speed_hz);
 
 	priv->power = devm_regulator_get_optional(&spi->dev, "vdd");
 	priv->transceiver = devm_regulator_get_optional(&spi->dev, "xceiver");
