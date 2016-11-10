@@ -854,23 +854,8 @@ static irqreturn_t mcp251x_can_ist(int irq, void *dev_id)
 		}
 		
 		mcp251x_hw_rx_frame(spi, &rx_buf[rx_buf_idx], priv->next_rx_idx);
-		//~ buf = &rx_buf[rx_buf_idx];
-		//~ buf_idx = priv->next_rx_idx;
-		//~ if (mcp251x_is_2510(spi)) {
-			//~ int i, len;
-
-			//~ for (i = 1; i < RXBDAT_OFF; i++)
-				//~ buf[i] = mcp251x_read_reg(spi, RXBCTRL(buf_idx) + i);
-
-			//~ len = get_can_dlc(buf[RXBDLC_OFF] & RXBDLC_LEN_MASK);
-			//~ for (; i < (RXBDAT_OFF + len); i++)
-				//~ buf[i] = mcp251x_read_reg(spi, RXBCTRL(buf_idx) + i);
-		//~ } else {
-			//~ priv->spi_tx_buf[RXBCTRL_OFF] = INSTRUCTION_READ_RXB(buf_idx);
-			//~ mcp251x_spi_trans(spi, SPI_TRANSFER_BUF_LEN);
-			//~ memcpy(buf, priv->spi_rx_buf, SPI_TRANSFER_BUF_LEN);
-		//~ }
 		rx_buf_idx += SPI_TRANSFER_BUF_LEN;
+		
 		/*
 		 * Free one buffer ASAP
 		 * (The MCP2515 does this automatically.)
