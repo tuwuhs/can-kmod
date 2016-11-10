@@ -89,7 +89,6 @@
 #define RTS_TXB2		0x04
 #define INSTRUCTION_RTS(n)	(0x80 | ((n) & 0x07))
 
-
 /* MPC251x registers */
 #define CANSTAT	      0x0e
 #define CANCTRL	      0x0f
@@ -458,12 +457,13 @@ static void mcp251x_hw_rx_frame(struct spi_device *spi, u8 *buf,
 	}
 }
 
-static void mcp251x_hw_rx(struct spi_device *spi, int buf_idx)
+static void mcp251x_hw_rx(struct spi_device *spi, u8 *buf)
 {
 	struct mcp251x_priv *priv = spi_get_drvdata(spi);
 	struct sk_buff *skb;
 	struct can_frame *frame;
-	u8 buf[SPI_TRANSFER_BUF_LEN];
+	u8 i;
+	char debug_buffer[128];
 
 	skb = alloc_can_skb(priv->net, &frame);
 	if (!skb) {
@@ -472,7 +472,6 @@ static void mcp251x_hw_rx(struct spi_device *spi, int buf_idx)
 		return;
 	}
 
-	mcp251x_hw_rx_frame(spi, buf, buf_idx);
 	if (buf[RXBSIDL_OFF] & RXBSIDL_IDE) {
 		/* Extended ID format */
 		frame->can_id = CAN_EFF_FLAG;
@@ -498,6 +497,13 @@ static void mcp251x_hw_rx(struct spi_device *spi, int buf_idx)
 	/* Data length */
 	frame->can_dlc = get_can_dlc(buf[RXBDLC_OFF] & RXBDLC_LEN_MASK);
 	memcpy(frame->data, buf + RXBDAT_OFF, frame->can_dlc);
+	
+	sprintf(debug_buffer, "%d: ", frame->can_dlc);
+	for (i = 0; i < frame->can_dlc; i++) {
+		sprintf(debug_buffer + strlen(debug_buffer), 
+			"%02x", frame->data[i]);
+	}
+	printk(KERN_DEBUG "%s", debug_buffer);
 
 	priv->net->stats.rx_packets++;
 	priv->net->stats.rx_bytes += frame->can_dlc;
@@ -805,6 +811,11 @@ static irqreturn_t mcp251x_can_ist(int irq, void *dev_id)
 	struct mcp251x_priv *priv = dev_id;
 	struct spi_device *spi = priv->spi;
 	struct net_device *net = priv->net;
+	u8 rx_buf[16 * SPI_TRANSFER_BUF_LEN];
+	u8 rx_buf_idx = 0;
+	u8 i = 0;
+
+	printk(KERN_DEBUG "i");
 
 	mutex_lock(&priv->mcp_lock);
 	while (!priv->force_quit) {
@@ -812,7 +823,7 @@ static irqreturn_t mcp251x_can_ist(int irq, void *dev_id)
 		u8 intf, eflag;
 		u8 clear_intf = 0;
 		int can_id = 0, data1 = 0;
-
+		
 		mcp251x_read_2regs(spi, CANINTF, &intf, &eflag);
 
 		/* mask out flags we don't care about */
@@ -820,7 +831,8 @@ static irqreturn_t mcp251x_can_ist(int irq, void *dev_id)
 
 		/* receive buffer 0 */
 		if (intf & CANINTF_RX0IF) {
-			mcp251x_hw_rx(spi, 0);
+			mcp251x_hw_rx_frame(spi, &rx_buf[rx_buf_idx], 0);
+			rx_buf_idx += SPI_TRANSFER_BUF_LEN;
 			/*
 			 * Free one buffer ASAP
 			 * (The MCP2515 does this automatically.)
@@ -829,9 +841,12 @@ static irqreturn_t mcp251x_can_ist(int irq, void *dev_id)
 				mcp251x_write_bits(spi, CANINTF, CANINTF_RX0IF, 0x00);
 		}
 
+		mcp251x_read_2regs(spi, CANINTF, &intf, &eflag);
+
 		/* receive buffer 1 */
 		if (intf & CANINTF_RX1IF) {
-			mcp251x_hw_rx(spi, 1);
+			mcp251x_hw_rx_frame(spi, &rx_buf[rx_buf_idx], 1);
+			rx_buf_idx += SPI_TRANSFER_BUF_LEN;
 			/* the MCP2515 does this automatically */
 			if (mcp251x_is_2510(spi))
 				clear_intf |= CANINTF_RX1IF;
@@ -928,7 +943,14 @@ static irqreturn_t mcp251x_can_ist(int irq, void *dev_id)
 		}
 
 	}
+
+	for (i = 0; i < rx_buf_idx; i += SPI_TRANSFER_BUF_LEN) {
+		printk(KERN_INFO "i=%d %d\n", i, rx_buf_idx);
+		mcp251x_hw_rx(spi, &rx_buf[i]);
+	}
+
 	mutex_unlock(&priv->mcp_lock);
+	
 	return IRQ_HANDLED;
 }
 
@@ -1046,6 +1068,8 @@ static int mcp251x_can_probe(struct spi_device *spi)
 	/* Sanity check */
 	if (freq < 1000000 || freq > 25000000)
 		return -ERANGE;
+
+	printk(KERN_DEBUG "SPI clock: %d", freq);
 
 	/* Allocate can/net device */
 	net = alloc_candev(sizeof(struct mcp251x_priv), TX_ECHO_SKB_MAX);
