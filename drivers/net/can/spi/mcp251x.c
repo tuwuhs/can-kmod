@@ -199,6 +199,9 @@
 #define RXMSIDL(n) ((n) * 4 + 0x21)
 #define RXMEID8(n) ((n) * 4 + 0x22)
 #define RXMEID0(n) ((n) * 4 + 0x23)
+#define RXSTATUS_RXB0 (0x40)
+#define RXSTATUS_RXB1 (0x80)
+#define RXSTATUS_RXB (RXSTATUS_RXB0 | RXSTATUS_RXB1)
 
 #define GET_BYTE(val, byte)			\
 	(((val) >> ((byte) * 8)) & 0xff)
@@ -841,14 +844,14 @@ static irqreturn_t mcp251x_can_ist(int irq, void *dev_id)
 		u8 rx_status;
 		
 		rx_status = mcp251x_rx_status(spi);
-		rx_status &= 0xC0;
+		rx_status &= RXSTATUS_RXB;
 		
 		if (rx_status == 0)
 			break;
 		
-		if (rx_status == 0x40) {
+		if (rx_status == RXSTATUS_RXB0) {
 			priv->next_rx_idx = 0;
-		} else if (rx_status == 0x80) {
+		} else if (rx_status == RXSTATUS_RXB1) {
 			priv->next_rx_idx = 1;
 		} else {
 		}
@@ -867,7 +870,7 @@ static irqreturn_t mcp251x_can_ist(int irq, void *dev_id)
 		
 		if (priv->next_rx_idx == 1) {
 			priv->next_rx_idx = 0;
-		} else if (rx_status & 0x80) {
+		} else if (rx_status & RXSTATUS_RXB1) {
 			priv->next_rx_idx = 1;
 		}
 	}
